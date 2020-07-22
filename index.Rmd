@@ -1,0 +1,777 @@
+---
+title: "UFPs (Ultrafine Particles) Spatial Analysis for CNG and Diesel vehicle for mobile monitoring"
+author: "Adithi R. Upadhya - ILK Labs"
+date: "7/12/2020"
+output: 
+  html_document:
+    df_print: paged
+    code_folding: hide
+    fig_width: 8
+    fig_height: 6
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_caption: true
+theme: yeti
+---
+<style type="text/css">
+body{
+  font-family: Candara;
+  font-size: 13pt;
+}
+code.r{
+    font-size: 12pt;
+}
+pre { 
+    font-size: 12pt;
+}
+</style>
+
+
+```{r setup, include = FALSE}
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(ggrepel)
+library(rgdal)
+library(sp)
+library(raster)
+library(sf)
+library(leaflet)
+library(purrr)
+library(scales)
+risk.bins <- c(0, 5000, 10000, 20000, 40000, 70000, 100000, 150000, 200000, 500000)
+pal <- colorBin( "Spectral", bins = risk.bins, na.color = "#808080", reverse = TRUE)
+p <- c(0.1, 0.25, 0.5, 0.75, 0.9)
+p_names <- map_chr(p, ~paste0(.x*100, "%"))
+p_funs <- map(p, ~partial(quantile, probs = .x, na.rm = TRUE)) %>%
+      set_names(nm = p_names)
+```
+
+# Study Area Spatial Analysis
+
+**All the data used here is from the snapped 30 m road segment Median of means, collected for Ultrafine Particles.**
+
+```{r include = FALSE, warning = FALSE, message = FALSE}
+setwd("D:/Dropbox/APMfull/All_Data_CNG_Dsl/Diesel_CNG_layer")
+cbd_cng_map <- readOGR("Corrected_Median_Means_Final_CBD_CNG_Layer.shp", layer = "Corrected_Median_Means_Final_CBD_CNG_Layer")
+kan_cng_map <- readOGR("Corrected_Median_Means_Final_KAN_CNG_Layer.shp", layer = "Corrected_Median_Means_Final_KAN_CNG_Layer")
+mal1_cng_map <- readOGR("Corrected_Median_Means_Final_MAL1_CNG_Layer.shp", layer = "Corrected_Median_Means_Final_MAL1_CNG_Layer")
+mal2_cng_map <- readOGR("Corrected_Median_Means_Final_MAL2_CNG_Layer.shp", layer = "Corrected_Median_Means_Final_MAL2_CNG_Layer")
+cng_map <- bind(cbd_cng_map, kan_cng_map, mal1_cng_map, mal2_cng_map)
+cng_map <- spTransform(cng_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+cng <- st_as_sf(cng_map) 
+cng <- cng %>%
+  data.frame(cng) %>%
+  dplyr::select(UID, Med_CPC) 
+names(cng) <- c("UID", "UFPs_CNG")
+cbd_dsl_map <- readOGR("Corrected_Median_Means_Final_CBD_Diesel_Layer.shp", layer = "Corrected_Median_Means_Final_CBD_Diesel_Layer")
+kan_dsl_map <- readOGR("Corrected_Median_Means_Final_KAN_Diesel_Layer.shp", layer = "Corrected_Median_Means_Final_KAN_Diesel_Layer")
+mal1_dsl_map <- readOGR("Corrected_Median_Means_Final_MAL1_Diesel_Layer.shp", layer = "Corrected_Median_Means_Final_MAL1_Diesel_Layer")
+mal2_dsl_map <- readOGR("Corrected_Median_Means_Final_MAL2_Diesel_Layer.shp", layer = "Corrected_Median_Means_Final_MAL2_Diesel_Layer")
+dsl_map <- bind(cbd_dsl_map, kan_dsl_map, mal1_dsl_map, mal2_dsl_map)
+dsl_map <- spTransform(dsl_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+dsl <- st_as_sf(dsl_map) 
+dsl <- dsl %>%
+  data.frame(dsl) %>%
+  dplyr::select(UID, Med_CPC) 
+names(dsl) <- c("UID", "UFPs_Dsl")
+final <- left_join(cng, dsl, by = "UID")
+final1 <- final
+final$UID <- NULL
+```
+
+## Summary of the data 
+ 
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 1: Frequency distribution for the CNG Median of Means map"}
+y <- ggplot(data = final, aes(x = UFPs_CNG)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_CNG", y = "count") +
+  scale_x_continuous() +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(final$UFPs_CNG)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7)  
+y
+```
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 2: Frequency distribution for the Diesel Median of Means map"}
+y <- ggplot(data = final, aes(x = UFPs_Dsl)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_Dsl", y = "count") +
+  scale_x_continuous(limits = c(0, NA), expand = c(0, 0)) +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(final$UFPs_Dsl)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7)  
+y
+```
+
+```{r cols.print = 13}
+names(final) <- c("UFPs_CNG",  "UFPs_Dsl")
+columns <-c("UFPs_CNG", "UFPs_Dsl")
+final$UFPs_CNG <- as.numeric(as.character(final$UFPs_CNG))
+final$UFPs_Dsl <- as.numeric(as.character(final$UFPs_Dsl))
+tmp <- do.call(data.frame,
+               list(Mean = apply(final, 2, mean, na.rm = TRUE),
+                    SD = apply(final, 2, sd, na.rm = TRUE), 
+                    Median = apply(final, 2, median, na.rm = TRUE),
+                    IQR = apply(final, 2, IQR, na.rm = TRUE),
+                    Min = apply(final, 2, min, na.rm = TRUE),
+                    Max = apply(final, 2, max, na.rm = TRUE),
+                    p1 = apply(final, 2, quantile, probs = c(0.01), na.rm = TRUE),
+                    p10 = apply(final, 2, quantile, probs = c(0.1), na.rm = TRUE),
+                    p25 = apply(final, 2, quantile, probs = c(0.25), na.rm = TRUE),
+                    p75 = apply(final, 2, quantile, probs = c(0.75), na.rm = TRUE),
+                    p90 = apply(final, 2, quantile, probs = c(0.9),  na.rm = TRUE),
+                    p99 = apply(final, 2, quantile, probs = c(0.99), na.rm = TRUE),
+                    Total_non_NA = apply(final, 2, function(x) { length(which(!is.na(x))) })))
+tmp$Mean <- round(as.numeric(tmp$Mean), digits = 2)
+tmp$IQR <- round(as.numeric(tmp$IQR), digits = 2)
+tmp$Median <- round(as.numeric(tmp$Median), digits = 2)
+tmp$Min <- round(as.numeric(tmp$Min), digits = 2)
+tmp$Max <- round(as.numeric(tmp$Max), digits = 2)
+tmp$p10 <- round(as.numeric(tmp$p10), digits = 2)
+tmp$SD <- round(as.numeric(tmp$SD), digits = 2)
+tmp$p90 <- round(as.numeric(tmp$p90), digits = 2)
+tmp$p75 <- round(as.numeric(tmp$p75), digits = 2)
+tmp$p99 <- round(as.numeric(tmp$p99), digits = 2)
+tmp$p1 <- round(as.numeric(tmp$p1), digits = 2)
+tmp$p25 <- round(as.numeric(tmp$p25), digits = 2)
+tmp
+
+```
+
+## Median of means map in Study Area for CNG car
+
+```{r fig.align = "center", fig.cap = "\\label{fig:figs}Fig 3: CNG Median of Means map"}
+leaflet(cng_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 3, color = ~pal(cng_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~cng_map$Med_CPC,  title = paste("CNG UFPs Map")) 
+```
+
+## Median of means map in Study Area for Diesel car
+
+```{r fig.align = "center", fig.cap = "\\label{fig:figs}Fig 4: Diesel Median of Means map"}
+leaflet(dsl_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 3, color = ~pal(dsl_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~dsl_map$Med_CPC,  title = paste("Diesel UFPs Map")) 
+```
+
+## t-test for UFPs_CNG and UFPs_Dsl data 
+
+```{r message = FALSE, warning = FALSE}
+t_test <- t.test(final$UFPs_CNG, final$UFPs_Dsl)
+a <- t_test$p.value
+b <- round(t_test$estimate[1], digits = 2)
+c <- round(t_test$estimate[2], digits=2)
+e <- round(as.numeric(t_test$parameter), digits = 2)
+f <- round(as.numeric(t_test$statistic), digits = 2)
+t_test
+```
+
+# CBD Spatial Analysis
+
+```{r include = FALSE, warning = FALSE, message = FALSE}
+setwd("D:/Dropbox/APMfull/All_Data_CNG_Dsl/Diesel_CNG_layer")
+cbd_cng_map <- readOGR("Corrected_Median_Means_Final_CBD_CNG_Layer.shp", layer = "Corrected_Median_Means_Final_CBD_CNG_Layer")
+cbd_cng_map <- spTransform(cbd_cng_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+cbd_cng <- st_as_sf(cbd_cng_map) 
+cbd_cng <- cbd_cng %>%
+  data.frame(cbd_cng)  %>%
+  dplyr::select(Road_ID, Med_CPC) 
+names(cbd_cng) <- c("Road_ID", "UFPs_CNG")
+cbd_dsl_map <- readOGR("Corrected_Median_Means_Final_CBD_Diesel_Layer.shp", layer = "Corrected_Median_Means_Final_CBD_Diesel_Layer")
+cbd_dsl_map <- spTransform(cbd_dsl_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+cbd_dsl <- st_as_sf(cbd_dsl_map) 
+cbd_dsl <- cbd_dsl %>%
+  data.frame(cbd_dsl) %>%
+  dplyr::select(Road_ID, Med_CPC) 
+names(cbd_dsl) <- c("Road_ID", "UFPs_Dsl")
+CBD_final <- left_join(cbd_cng, cbd_dsl, by = "Road_ID")
+CBD_final$Road_ID <- NULL
+```
+
+## Summary of the data
+
+**Using Median of Means map for CNG car with 22 passes.**
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 5: Frequency distribution for the CNG Median of Means map"}
+y <- ggplot(data = CBD_final, aes(x = UFPs_CNG)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_CNG", y = "count") +
+  scale_x_continuous() +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(CBD_final$UFPs_CNG)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7)  
+y
+```
+
+**Using Median of Means map for Diesel car with 6 passes.**
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 6: Frequency distribution for the Diesel Median of Means map"}
+y <- ggplot(data = CBD_final, aes(x = UFPs_Dsl)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_Dsl", y = "count") +
+  scale_x_continuous() +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(CBD_final$UFPs_Dsl)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7) 
+y
+```
+
+```{r cols.print = 13}
+names(CBD_final) <- c("UFPs_CNG",  "UFPs_Dsl")
+columns <-c("UFPs_CNG",  "UFPs_Dsl")
+CBD_final$UFPs_CNG <- as.numeric(as.character(CBD_final$UFPs_CNG))
+CBD_final$UFPs_Dsl <- as.numeric(as.character(CBD_final$UFPs_Dsl))
+tmp <- do.call(data.frame,
+               list(Mean = apply(CBD_final, 2, mean, na.rm = TRUE),
+                    SD = apply(CBD_final, 2, sd, na.rm = TRUE), 
+                    Median = apply(CBD_final, 2, median, na.rm = TRUE),
+                    IQR = apply(CBD_final, 2, IQR, na.rm = TRUE),
+                    Min = apply(CBD_final, 2, min, na.rm = TRUE),
+                    Max = apply(CBD_final, 2, max, na.rm = TRUE),
+                    p1 = apply(CBD_final, 2, quantile, probs = c(0.01), na.rm = TRUE),
+                    p10 = apply(CBD_final, 2, quantile, probs = c(0.1), na.rm = TRUE),
+                    p25 = apply(CBD_final, 2, quantile, probs = c(0.25), na.rm = TRUE),
+                    p75 = apply(CBD_final, 2, quantile, probs = c(0.75), na.rm = TRUE),
+                    p90 = apply(CBD_final, 2, quantile, probs = c(0.9),  na.rm = TRUE),
+                    p99 = apply(CBD_final, 2, quantile, probs = c(0.99), na.rm = TRUE),
+                    Total_non_NA = apply(CBD_final, 2, function(x) { length(which(!is.na(x))) })))
+tmp$Mean <- round(as.numeric(tmp$Mean), digits = 2)
+tmp$IQR <- round(as.numeric(tmp$IQR), digits = 2)
+tmp$Median <- round(as.numeric(tmp$Median), digits = 2)
+tmp$Min <- round(as.numeric(tmp$Min), digits = 2)
+tmp$Max <- round(as.numeric(tmp$Max), digits = 2)
+tmp$p10 <- round(as.numeric(tmp$p10), digits = 2)
+tmp$SD <- round(as.numeric(tmp$SD), digits = 2)
+tmp$p90 <- round(as.numeric(tmp$p90), digits = 2)
+tmp$p75 <- round(as.numeric(tmp$p75), digits = 2)
+tmp$p99 <- round(as.numeric(tmp$p99), digits = 2)
+tmp$p1 <- round(as.numeric(tmp$p1), digits = 2)
+tmp$p25 <- round(as.numeric(tmp$p25), digits = 2)
+tmp
+
+```
+
+## Median of means map in CBD for CNG car
+
+```{r fig.align="center", fig.cap = "\\label{fig:figs}Fig 7: CNG Median of Means map"}
+leaflet(cbd_cng_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 7, color = ~pal(cbd_cng_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~cbd_cng_map$Med_CPC,  title = paste("CNG UFPs Map"))
+ 
+```
+
+## Median of means map in CBD for Diesel car
+
+```{r fig.align="center", fig.cap = "\\label{fig:figs}Fig 8: Diesel Median of Means map"}
+leaflet(cbd_dsl_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 7, color = ~pal(cbd_dsl_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~cbd_dsl_map$Med_CPC,  title = paste("Diesel UFPs Map"))
+ 
+```
+
+## t-test for UFPs_CNG and UFPs_Dsl data  
+
+```{r message = FALSE, warning = FALSE}
+t_test <- t.test(CBD_final$UFPs_CNG, CBD_final$UFPs_Dsl)
+a <- t_test$p.value
+b <- round(t_test$estimate[1], digits = 2)
+c <- round(t_test$estimate[2], digits=2)
+e <- round(as.numeric(t_test$parameter), digits = 2)
+f <- round(as.numeric(t_test$statistic), digits = 2)
+t_test
+```
+
+
+# Kannuru Spatial Analysis
+
+```{r include = FALSE, warning = FALSE, message = FALSE}
+setwd("D:/Dropbox/APMfull/All_Data_CNG_Dsl/Diesel_CNG_layer")
+kan_cng_map <- readOGR("Corrected_Median_Means_Final_KAN_CNG_Layer.shp", layer = "Corrected_Median_Means_Final_KAN_CNG_Layer")
+kan_cng_map <- spTransform(kan_cng_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+kan_cng <- st_as_sf(kan_cng_map) 
+kan_cng <- kan_cng %>%
+  data.frame(kan_cng)  %>%
+  dplyr::select(Road_ID, Med_CPC) 
+names(kan_cng) <- c("Road_ID", "UFPs_CNG")
+kan_dsl_map <- readOGR("Corrected_Median_Means_Final_KAN_Diesel_Layer.shp", layer = "Corrected_Median_Means_Final_KAN_Diesel_Layer")
+kan_dsl_map <- spTransform(kan_dsl_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+kan_dsl <- st_as_sf(kan_dsl_map) 
+kan_dsl <- kan_dsl %>%
+  data.frame(kan_dsl) %>%
+  dplyr::select(Road_ID, Med_CPC) 
+names(kan_dsl) <- c("Road_ID", "UFPs_Dsl")
+KAN_final <- left_join(kan_cng, kan_dsl, by = "Road_ID")
+KAN_final$Road_ID <- NULL
+```
+
+## Summary of the data
+
+**Using Median of Means map for CNG car with 22 passes.**
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 9: Frequency distribution for the CNG Median of Means map"}
+y <- ggplot(data = KAN_final, aes(x = UFPs_CNG)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_CNG", y = "count") +
+  scale_x_continuous() +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(KAN_final$UFPs_CNG)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7) 
+y
+```
+
+**Using Median of Means map for Diesel car with 7 passes.**
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 10: Frequency distribution for the Diesel Median of Means map"}
+y <- ggplot(data = KAN_final, aes(x = UFPs_Dsl)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_Dsl", y = "count") +
+  scale_x_continuous(limits = c(0, NA), expand = c(0, 0)) +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(KAN_final$UFPs_Dsl)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7) 
+y
+```
+
+```{r cols.print = 13}
+names(KAN_final) <- c("UFPs_CNG",  "UFPs_Dsl")
+columns <-c("UFPs_CNG",  "UFPs_Dsl")
+KAN_final$UFPs_CNG <- as.numeric(as.character(KAN_final$UFPs_CNG))
+KAN_final$UFPs_Dsl <- as.numeric(as.character(KAN_final$UFPs_Dsl))
+tmp <- do.call(data.frame,
+               list(Mean = apply(KAN_final, 2, mean, na.rm = TRUE),
+                    SD = apply(KAN_final, 2, sd, na.rm = TRUE), 
+                    Median = apply(KAN_final, 2, median, na.rm = TRUE),
+                    IQR = apply(KAN_final, 2, IQR, na.rm = TRUE),
+                    Min = apply(KAN_final, 2, min, na.rm = TRUE),
+                    Max = apply(KAN_final, 2, max, na.rm = TRUE),
+                    p1 = apply(KAN_final, 2, quantile, probs = c(0.01), na.rm = TRUE),
+                    p10 = apply(KAN_final, 2, quantile, probs = c(0.1), na.rm = TRUE),
+                    p25 = apply(KAN_final, 2, quantile, probs = c(0.25), na.rm = TRUE),
+                    p75 = apply(KAN_final, 2, quantile, probs = c(0.75), na.rm = TRUE),
+                    p90 = apply(KAN_final, 2, quantile, probs = c(0.9),  na.rm = TRUE),
+                    p99 = apply(KAN_final, 2, quantile, probs = c(0.99), na.rm = TRUE),
+                    Total_non_NA = apply(KAN_final, 2, function(x) { length(which(!is.na(x))) })))
+tmp$Mean <- round(as.numeric(tmp$Mean), digits = 2)
+tmp$IQR <- round(as.numeric(tmp$IQR), digits = 2)
+tmp$Median <- round(as.numeric(tmp$Median), digits = 2)
+tmp$Min <- round(as.numeric(tmp$Min), digits = 2)
+tmp$Max <- round(as.numeric(tmp$Max), digits = 2)
+tmp$p10 <- round(as.numeric(tmp$p10), digits = 2)
+tmp$SD <- round(as.numeric(tmp$SD), digits = 2)
+tmp$p90 <- round(as.numeric(tmp$p90), digits = 2)
+tmp$p75 <- round(as.numeric(tmp$p75), digits = 2)
+tmp$p99 <- round(as.numeric(tmp$p99), digits = 2)
+tmp$p1 <- round(as.numeric(tmp$p1), digits = 2)
+tmp$p25 <- round(as.numeric(tmp$p25), digits = 2)
+tmp
+
+```
+
+## Median of means map in Kannuru for CNG car
+
+```{r fig.align = "center", fig.cap = "\\label{fig:figs}Fig 11: CNG Median of Means map"}
+leaflet(kan_cng_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 7, color = ~pal(kan_cng_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~kan_cng_map$Med_CPC,  title = paste("CNG UFPs Map"))
+ 
+```
+
+## Median of means map in Kannuru for Diesel car
+
+```{r fig.align = "center", fig.cap = "\\label{fig:figs}Fig 12: Diesel Median of Means map"}
+leaflet(kan_dsl_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 7, color = ~pal(kan_dsl_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~kan_dsl_map$Med_CPC,  title = paste("Diesel UFPs Map"))
+ 
+```
+
+## t-test for UFPs_CNG and UFPs_Dsl data 
+
+```{r message = FALSE, warning = FALSE}
+t_test <- t.test(KAN_final$UFPs_CNG, KAN_final$UFPs_Dsl)
+a <- t_test$p.value
+b <- round(t_test$estimate[1], digits = 2)
+c <- round(t_test$estimate[2], digits=2)
+e <- round(as.numeric(t_test$parameter), digits = 2)
+f <- round(as.numeric(t_test$statistic), digits = 2)
+t_test
+```
+
+
+# Malleshwaram 1 Spatial Analysis
+
+```{r include = FALSE, warning = FALSE, message = FALSE}
+setwd("D:/Dropbox/APMfull/All_Data_CNG_Dsl/Diesel_CNG_layer")
+mal1_cng_map <- readOGR("Corrected_Median_Means_Final_MAL1_CNG_Layer.shp", layer = "Corrected_Median_Means_Final_MAL1_CNG_Layer")
+mal1_cng_map <- spTransform(mal1_cng_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+mal1_cng <- st_as_sf(mal1_cng_map) 
+mal1_cng <- mal1_cng %>%
+  data.frame(mal1_cng)  %>%
+  dplyr::select(Road_ID, Med_CPC) 
+names(mal1_cng) <- c("Road_ID", "UFPs_CNG")
+mal1_dsl_map <- readOGR("Corrected_Median_Means_Final_MAL1_Diesel_Layer.shp", layer = "Corrected_Median_Means_Final_MAL1_Diesel_Layer")
+mal1_dsl_map <- spTransform(mal1_dsl_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+mal1_dsl <- st_as_sf(mal1_dsl_map) 
+mal1_dsl <- mal1_dsl %>%
+  data.frame(mal1_dsl) %>%
+  dplyr::select(Road_ID, Med_CPC) 
+names(mal1_dsl) <- c("Road_ID", "UFPs_Dsl")
+MAL1_final <- left_join(mal1_cng, mal1_dsl, by = "Road_ID")
+MAL1_final$Road_ID <- NULL
+
+```
+
+## Summary of the data
+
+**Using Median of Means map for CNG car with 22 passes.**
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 13: Frequency distribution for the CNG Median of Means map"}
+y <- ggplot(data = MAL1_final, aes(x = UFPs_CNG)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_CNG", y = "count") +
+  scale_x_continuous() +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(MAL1_final$UFPs_CNG)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7) 
+y
+```
+
+**Using Median of Means map for Diesel car with 5 passes.**
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 14: Frequency distribution for the Diesel Median of Means map"}
+y <- ggplot(data = MAL1_final, aes(x = UFPs_Dsl)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_Dsl", y = "count") +
+  scale_x_continuous(limits = c(0, NA), expand = c(0, 0)) +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(MAL1_final$UFPs_Dsl)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7) 
+y
+```
+
+```{r cols.print = 13}
+names(MAL1_final) <- c("UFPs_CNG",  "UFPs_Dsl")
+columns <-c("UFPs_CNG",  "UFPs_Dsl")
+MAL1_final$UFPs_CNG <- as.numeric(as.character(MAL1_final$UFPs_CNG))
+MAL1_final$UFPs_Dsl <- as.numeric(as.character(MAL1_final$UFPs_Dsl))
+tmp <- do.call(data.frame,
+               list(Mean = apply(MAL1_final, 2, mean, na.rm = TRUE),
+                    SD = apply(MAL1_final, 2, sd, na.rm = TRUE), 
+                    Median = apply(MAL1_final, 2, median, na.rm = TRUE),
+                    IQR = apply(MAL1_final, 2, IQR, na.rm = TRUE),
+                    Min = apply(MAL1_final, 2, min, na.rm = TRUE),
+                    Max = apply(MAL1_final, 2, max, na.rm = TRUE),
+                    p1 = apply(MAL1_final, 2, quantile, probs = c(0.01), na.rm = TRUE),
+                    p10 = apply(MAL1_final, 2, quantile, probs = c(0.1), na.rm = TRUE),
+                    p25 = apply(MAL1_final, 2, quantile, probs = c(0.25), na.rm = TRUE),
+                    p75 = apply(MAL1_final, 2, quantile, probs = c(0.75), na.rm = TRUE),
+                    p90 = apply(MAL1_final, 2, quantile, probs = c(0.9),  na.rm = TRUE),
+                    p99 = apply(MAL1_final, 2, quantile, probs = c(0.99), na.rm = TRUE),
+                    Total_non_NA = apply(MAL1_final, 2, function(x) { length(which(!is.na(x))) })))
+tmp$Mean <- round(as.numeric(tmp$Mean), digits = 2)
+tmp$IQR <- round(as.numeric(tmp$IQR), digits = 2)
+tmp$Median <- round(as.numeric(tmp$Median), digits = 2)
+tmp$Min <- round(as.numeric(tmp$Min), digits = 2)
+tmp$Max <- round(as.numeric(tmp$Max), digits = 2)
+tmp$p10 <- round(as.numeric(tmp$p10), digits = 2)
+tmp$SD <- round(as.numeric(tmp$SD), digits = 2)
+tmp$p90 <- round(as.numeric(tmp$p90), digits = 2)
+tmp$p75 <- round(as.numeric(tmp$p75), digits = 2)
+tmp$p99 <- round(as.numeric(tmp$p99), digits = 2)
+tmp$p1 <- round(as.numeric(tmp$p1), digits = 2)
+tmp$p25 <- round(as.numeric(tmp$p25), digits = 2)
+tmp
+
+```
+
+## Median of means map in Malleshwaram 1 for CNG car
+
+```{r fig.align = "center", fig.cap = "\\label{fig:figs}Fig 15: CNG Median of Means map"}
+leaflet(mal1_cng_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 7, color = ~pal(mal1_cng_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~mal1_cng_map$Med_CPC,  title = paste("CNG UFPs Map")) 
+ 
+```
+
+## Median of means map in Malleshwaram 1 for Diesel car
+
+```{r fig.align = "center", fig.cap = "\\label{fig:figs}Fig 16: Diesel Median of Means map"}
+leaflet(mal1_dsl_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 7, color = ~pal(mal1_dsl_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~mal1_dsl_map$Med_CPC,  title = paste("Diesel UFPs Map")) 
+ 
+```
+
+## t-test for UFPs_CNG and UFPs_Dsl data 
+
+```{r message = FALSE, warning = FALSE}
+t_test <- t.test(MAL1_final$UFPs_CNG, MAL1_final$UFPs_Dsl)
+a <- t_test$p.value
+b <- round(t_test$estimate[1], digits = 2)
+c <- round(t_test$estimate[2], digits=2)
+e <- round(as.numeric(t_test$parameter), digits = 2)
+f <- round(as.numeric(t_test$statistic), digits = 2)
+t_test
+```
+
+
+# Malleshwaram 2 Spatial Analysis
+
+```{r include = FALSE, warning = FALSE, message = FALSE}
+setwd("D:/Dropbox/APMfull/All_Data_CNG_Dsl/Diesel_CNG_layer")
+mal2_cng_map <- readOGR("Corrected_Median_Means_Final_MAL2_CNG_Layer.shp", layer = "Corrected_Median_Means_Final_MAL2_CNG_Layer")
+mal2_cng_map <- spTransform(mal2_cng_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+mal2_cng <- st_as_sf(mal2_cng_map) 
+mal2_cng <- mal2_cng %>%
+  data.frame(mal2_cng)  %>%
+  dplyr::select(Road_ID, Med_CPC) 
+names(mal2_cng) <- c("Road_ID", "UFPs_CNG")
+mal2_dsl_map <- readOGR("Corrected_Median_Means_Final_MAL2_Diesel_Layer.shp", layer = "Corrected_Median_Means_Final_MAL2_Diesel_Layer")
+mal2_dsl_map <- spTransform(mal2_dsl_map, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 "))
+mal2_dsl <- st_as_sf(mal2_dsl_map) 
+mal2_dsl <- mal2_dsl %>%
+  data.frame(mal2_dsl) %>%
+  dplyr::select(Road_ID, Med_CPC) 
+names(mal2_dsl) <- c("Road_ID", "UFPs_Dsl")
+MAL2_final <- left_join(mal2_cng, mal2_dsl, by = "Road_ID")
+MAL2_final$Road_ID <- NULL
+
+```
+
+## Summary of the data
+
+**Using Median of Means map for CNG car with 21 passes.**
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 17: Frequency distribution for the CNG Median of Means map"}
+y <- ggplot(data = MAL2_final, aes(x = UFPs_CNG)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_CNG", y = "count") +
+  scale_x_continuous() +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(MAL2_final$UFPs_CNG)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7) 
+y
+```
+
+**Using Median of Means map for Diesel car with 5 passes.**
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 18: Frequency distribution for the Diesel Median of Means map"}
+y <- ggplot(data = MAL2_final, aes(x = UFPs_Dsl)) + geom_histogram(colour = "#b87333", fill = "#b87333") +
+  theme_classic() + labs(x = "UFPs_Dsl", y = "count") +
+  scale_x_continuous(limits = c(0, NA), expand = c(0, 0)) +
+  scale_y_continuous() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  geom_text(aes(label = paste("N = ",sum(!is.na(MAL2_final$UFPs_Dsl)))), x = Inf, y = Inf, hjust = 1, vjust = 2, colour = "black", size = 7)
+y
+```
+
+```{r cols.print = 13}
+names(MAL2_final) <- c("UFPs_CNG",  "UFPs_Dsl")
+columns <-c("UFPs_CNG",  "UFPs_Dsl")
+MAL2_final$UFPs_CNG <- as.numeric(as.character(MAL2_final$UFPs_CNG))
+MAL2_final$UFPs_Dsl <- as.numeric(as.character(MAL2_final$UFPs_Dsl))
+tmp <- do.call(data.frame,
+               list(Mean = apply(MAL2_final, 2, mean, na.rm = TRUE),
+                    SD = apply(MAL2_final, 2, sd, na.rm = TRUE), 
+                    Median = apply(MAL2_final, 2, median, na.rm = TRUE),
+                    IQR = apply(MAL2_final, 2, IQR, na.rm = TRUE),
+                    Min = apply(MAL2_final, 2, min, na.rm = TRUE),
+                    Max = apply(MAL2_final, 2, max, na.rm = TRUE),
+                    p1 = apply(MAL2_final, 2, quantile, probs = c(0.01), na.rm = TRUE),
+                    p10 = apply(MAL2_final, 2, quantile, probs = c(0.1), na.rm = TRUE),
+                    p25 = apply(MAL2_final, 2, quantile, probs = c(0.25), na.rm = TRUE),
+                    p75 = apply(MAL2_final, 2, quantile, probs = c(0.75), na.rm = TRUE),
+                    p90 = apply(MAL2_final, 2, quantile, probs = c(0.9),  na.rm = TRUE),
+                    p99 = apply(MAL2_final, 2, quantile, probs = c(0.99), na.rm = TRUE),
+                    Total_non_NA = apply(MAL2_final, 2, function(x) { length(which(!is.na(x))) })))
+tmp$Mean <- round(as.numeric(tmp$Mean), digits = 2)
+tmp$IQR <- round(as.numeric(tmp$IQR), digits = 2)
+tmp$Median <- round(as.numeric(tmp$Median), digits = 2)
+tmp$Min <- round(as.numeric(tmp$Min), digits = 2)
+tmp$Max <- round(as.numeric(tmp$Max), digits = 2)
+tmp$p10 <- round(as.numeric(tmp$p10), digits = 2)
+tmp$SD <- round(as.numeric(tmp$SD), digits = 2)
+tmp$p90 <- round(as.numeric(tmp$p90), digits = 2)
+tmp$p75 <- round(as.numeric(tmp$p75), digits = 2)
+tmp$p99 <- round(as.numeric(tmp$p99), digits = 2)
+tmp$p1 <- round(as.numeric(tmp$p1), digits = 2)
+tmp$p25 <- round(as.numeric(tmp$p25), digits = 2)
+tmp
+
+```
+
+## Median of means map in Malleshwaram 2 for CNG car
+
+```{r fig.align = "center", fig.cap = "\\label{fig:figs}Fig 19: CNG Median of Means map"}
+leaflet(mal2_cng_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 7, color = ~pal(mal2_cng_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~mal2_cng_map$Med_CPC,  title = paste("CNG UFPs Map")) 
+ 
+```
+
+## Median of means map in Malleshwaram 2 for Diesel car
+
+```{r fig.align = "center", fig.cap = "\\label{fig:figs}Fig 20: Diesel Median of Means map"}
+leaflet(mal2_dsl_map) %>% 
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolylines(weight = 7, color = ~pal(mal2_dsl_map$Med_CPC)) %>%
+      addLegend("bottomright", pal = pal, values = ~mal2_dsl_map$Med_CPC,  title = paste("Diesel UFPs Map")) 
+```
+
+## t-test for UFPs_CNG and UFPs_Dsl data
+
+```{r message = FALSE, warning = FALSE}
+t_test <- t.test(MAL2_final$UFPs_CNG, MAL2_final$UFPs_Dsl)
+a <- t_test$p.value
+b <- round(t_test$estimate[1], digits = 2)
+c <- round(t_test$estimate[2], digits = 2)
+e <- round(as.numeric(t_test$parameter), digits = 2)
+f <- round(as.numeric(t_test$statistic), digits = 2)
+t_test
+```
+
+
+# Area-wise distribution of UFPs 
+
+**Area wise box plots Using the Median of means reference layer (Combined MAL1 and MAL2).**
+
+```{r message = FALSE, warning = FALSE, fig.align = "center", fig.cap = "\\label{fig:figs}Fig 21: Area wise box plot (MAL combined)"}
+f <- function(x) {
+  r <- quantile(x, probs = c(0.05, 0.25, 0.5, 0.75, 0.95))
+  names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
+  r
+}
+final <- final1
+final$Area <- substr(final$UID, 1, 3)
+final2 <- final
+final2$Area <- "Total"
+final3 <- rbind(final, final2)
+melt_joined_final <- reshape2::melt(final3, id.var = c("UID", "Area"), 
+                                    vars = c("UFPs_CNG", "UFPs_Dsl"))
+names(melt_joined_final) <- c("UID", "Area", "Car", "Value")
+melt_joined_final$Area <- as.vector(melt_joined_final$Area) 
+melt_joined_final$Area <- factor(melt_joined_final$Area, levels = c("CBD","KAN", "MAL", "Total"))
+
+plot_box2 <- ggplot(melt_joined_final, aes(x = Area, y = Value, colour = Car)) +   labs(x = "", y = "UFPs") +
+  stat_summary(fun.data = f, geom ="boxplot", width = 0.4, size = 0.8, 
+               position = position_dodge(width = 0.6)) +  
+  stat_summary(fun.y = mean, geom = "point", size = 2, 
+               position = position_dodge(width = 0.6)) +
+  scale_y_continuous() + theme_classic() +
+  scale_color_manual(labels = c("CNG", "Diesel"), values = c("#b87333", "steelblue")) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 14, colour = "black", face = "bold"),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        strip.background = element_blank(), strip.text = element_blank()) 
+
+plot_box2
+```
+
+
+
+```{r message = FALSE, warning = FALSE, fig.align = "center", fig.cap = "\\label{fig:figs}Fig 22: Area wise box plot (MAL split)"}
+final <- final1
+final$Area <- substr(final$UID, 1, 4)
+final$Area <- gsub("_", "", final$Area)
+final2 <- final
+final2$Area <- "Total"
+final3 <- rbind(final, final2)
+melt_joined_final <- reshape2::melt(final3, id.var = c("UID", "Area"), 
+                                    vars = c("UFPs_CNG", "UFPs_Dsl"))
+names(melt_joined_final) <- c("UID", "Area", "Car", "Value")
+melt_joined_final$Area <- as.vector(melt_joined_final$Area) 
+melt_joined_final$Area <- factor(melt_joined_final$Area, levels = c("CBD","KAN", "MAL1", "MAL2", "Total"))
+
+plot_box2 <- ggplot(melt_joined_final, aes(x = Area, y = Value, colour = Car)) +   labs(x = "", y = "UFPs") +
+  stat_summary(fun.data = f, geom ="boxplot", width = 0.4, size = 0.8, 
+               position = position_dodge(width = 0.6)) +  
+  stat_summary(fun.y = mean, geom = "point", size = 2, 
+               position = position_dodge(width = 0.6)) +
+  scale_y_continuous() + theme_classic() +
+  scale_color_manual(labels = c("CNG", "Diesel"), values = c("#b87333", "steelblue")) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 14, colour = "black", face = "bold"),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        strip.background = element_blank(), strip.text = element_blank()) + 
+  annotate(geom = "text", label = "p < 0.05", x = "Total", y = 150, size = 5) + 
+  annotate(geom = "text", label = "p > 0.05", x = "MAL1", y = 150, size = 5) + 
+  annotate(geom = "text", label = "p > 0.05", x = "MAL2", y = 150, size = 5) + 
+  annotate(geom = "text", label = "p < 0.05", x = "KAN", y = 150, size = 5) + 
+  annotate(geom = "text", label = "p < 0.05", x = "CBD", y = 150, size = 5)
+
+plot_box2
+```
+
+
+
+
